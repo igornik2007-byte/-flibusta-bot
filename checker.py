@@ -47,6 +47,11 @@ def main():
     for author_url in authors:
 
         books = get_author_books(author_url)
+        print("Проверяем:", author_url)
+
+print("Найдено книг:", len(books))
+
+print(books[:5])
 
         old_books = seen.get(author_url, [])
 
