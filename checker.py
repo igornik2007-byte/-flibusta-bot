@@ -38,6 +38,7 @@ def send_message(text):
 
 
 def main():
+        send_message("Тестовое сообщение от Flibusta bot ✅")
 
     authors = load_json(AUTHORS_FILE, [])
     seen = load_json(SEEN_FILE, {})
