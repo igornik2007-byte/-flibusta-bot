@@ -32,8 +32,6 @@ def get_author_books(author_url):
         "rtf"
     }
 
-    # На странице книги находятся в строках/блоках,
-    # где присутствует номер книги и ссылка с названием.
     for element in soup.find_all("a", href=True):
 
         text = element.get_text(" ", strip=True)
@@ -42,17 +40,12 @@ def get_author_books(author_url):
         if not text:
             continue
 
-        # Служебные ссылки пропускаем
         if text.lower() in bad_names:
             continue
 
-        # Ищем именно ссылки на книгу.
-        # Ссылки на форматы/чтение имеют другие адреса.
         if "/b/" not in href:
             continue
 
-        # У служебных ссылок могут быть дополнительные параметры.
-        # Название книги обычно не начинается со скобок.
         if text.startswith("("):
             continue
 
@@ -60,3 +53,51 @@ def get_author_books(author_url):
             books.append(text)
 
     return books
+
+
+def get_author_name(author_url):
+    """
+    Получает имя автора со страницы автора.
+    """
+
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    response = requests.get(
+        author_url,
+        headers=headers,
+        timeout=30
+    )
+
+    response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Сначала пытаемся найти заголовок страницы
+    title = soup.find("h1")
+
+    if title:
+        name = title.get_text(" ", strip=True)
+        if name:
+            return name
+
+    # Запасной вариант — title страницы
+    page_title = soup.find("title")
+
+    if page_title:
+        name = page_title.get_text(" ", strip=True)
+
+        # Убираем возможное название сайта
+        for suffix in [
+            " — Флибуста",
+            " - Флибуста",
+            " | Флибуста"
+        ]:
+            if suffix in name:
+                name = name.split(suffix)[0].strip()
+
+        if name:
+            return name
+
+    return "Неизвестный автор"
