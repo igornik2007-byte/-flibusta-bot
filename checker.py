@@ -2,7 +2,7 @@ import os
 import json
 import requests
 
-from flibusta import get_author_books
+from flibusta import get_author_books, get_author_name
 
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -69,8 +69,8 @@ def main():
         old_books = seen.get(author_url)
 
         # Первая проверка автора:
-        # просто запоминаем существующие книги
-        # и ничего не отправляем в Telegram.
+        # запоминаем существующие книги,
+        # но уведомление не отправляем.
         if old_books is None:
             print("Первичная загрузка автора — уведомление не отправляем.")
             seen[author_url] = books
@@ -85,13 +85,24 @@ def main():
         print("Новых книг:", len(new_books))
 
         if new_books:
-            message = (
-                "📚 Новые книги на Флибусте:\n\n"
-                + "\n".join(
-                    "• " + book
-                    for book in new_books
-                )
-            )
+
+            try:
+                author_name = get_author_name(author_url)
+            except Exception as e:
+                print("Не удалось получить имя автора:", e)
+                author_name = "Неизвестный автор"
+
+            message_lines = [
+                "📚 Новые книги на Флибусте:",
+                "",
+                f"👤 Автор: {author_name}",
+                ""
+            ]
+
+            for book in new_books:
+                message_lines.append(f"• {book}")
+
+            message = "\n".join(message_lines)
 
             send_message(message)
 
