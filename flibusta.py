@@ -1,6 +1,5 @@
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
 
 
 def get_author_books(author_url):
@@ -20,34 +19,43 @@ def get_author_books(author_url):
 
     books = []
 
-    # Ищем ссылки на страницы книг
-    for link in soup.find_all("a", href=True):
+    bad_names = {
+        "(читать)",
+        "(fb2)",
+        "(epub)",
+        "(mobi)",
+        "(rtf)",
+        "читать",
+        "fb2",
+        "epub",
+        "mobi",
+        "rtf"
+    }
 
-        href = link.get("href", "")
-        text = link.get_text(" ", strip=True)
+    # На странице книги находятся в строках/блоках,
+    # где присутствует номер книги и ссылка с названием.
+    for element in soup.find_all("a", href=True):
 
-        # Нас интересуют только ссылки на книги
-        if not href.startswith("/b/"):
-            continue
+        text = element.get_text(" ", strip=True)
+        href = element.get("href", "")
 
         if not text:
             continue
 
-        # Отбрасываем служебные ссылки
-        bad_names = {
-            "читать",
-            "fb2",
-            "epub",
-            "mobi",
-            "rtf",
-            "скачать",
-            "скачать rtf"
-        }
-
+        # Служебные ссылки пропускаем
         if text.lower() in bad_names:
             continue
 
-        # Убираем дубликаты
+        # Ищем именно ссылки на книгу.
+        # Ссылки на форматы/чтение имеют другие адреса.
+        if "/b/" not in href:
+            continue
+
+        # У служебных ссылок могут быть дополнительные параметры.
+        # Название книги обычно не начинается со скобок.
+        if text.startswith("("):
+            continue
+
         if text not in books:
             books.append(text)
 
