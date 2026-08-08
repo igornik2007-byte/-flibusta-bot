@@ -20,11 +20,26 @@ def get_author_books(author_url):
     books = []
 
     for link in soup.find_all("a", href=True):
-        text = link.get_text(strip=True)
-        href = link["href"]
+        text = link.get_text(" ", strip=True)
+        href = link.get("href", "")
 
-        if text and "/b/" in href:
-            if text not in books:
-                books.append(text)
+        # Берём только ссылки на книги
+        if "/b/" not in href:
+            continue
+
+        # Убираем служебные ссылки
+        if text.lower() in {
+            "читать",
+            "fb2",
+            "epub",
+            "mobi",
+            "скачать",
+            "скачать rtf",
+            "rtf"
+        }:
+            continue
+
+        if text and text not in books:
+            books.append(text)
 
     return books
