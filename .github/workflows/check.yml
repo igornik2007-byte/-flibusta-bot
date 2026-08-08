@@ -29,6 +29,8 @@ jobs:
 
       - name: Run checker
         run: python checker.py
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
 
       - name: Save changes
         run: |
