@@ -33,7 +33,6 @@ def get_author_books(author_url):
     }
 
     for element in soup.find_all("a", href=True):
-
         text = element.get_text(" ", strip=True)
         href = element.get("href", "")
 
@@ -56,10 +55,6 @@ def get_author_books(author_url):
 
 
 def get_author_name(author_url):
-    """
-    Получает имя автора со страницы автора.
-    """
-
     headers = {
         "User-Agent": "Mozilla/5.0"
     }
@@ -74,30 +69,34 @@ def get_author_name(author_url):
 
     soup = BeautifulSoup(response.text, "html.parser")
 
-    # Сначала пытаемся найти заголовок страницы
-    title = soup.find("h1")
+    for element in soup.find_all("h1"):
+        name = element.get_text(" ", strip=True)
 
-    if title:
-        name = title.get_text(" ", strip=True)
-        if name:
-            return name
+        if not name:
+            continue
 
-    # Запасной вариант — title страницы
+        if name.lower() in {
+            "флибуста",
+            "книжное братство"
+        }:
+            continue
+
+        return name
+
     page_title = soup.find("title")
 
     if page_title:
         name = page_title.get_text(" ", strip=True)
 
-        # Убираем возможное название сайта
-        for suffix in [
+        for separator in [
+            " | Флибуста",
             " — Флибуста",
-            " - Флибуста",
-            " | Флибуста"
+            " - Флибуста"
         ]:
-            if suffix in name:
-                name = name.split(suffix)[0].strip()
+            if separator in name:
+                name = name.split(separator)[0].strip()
 
-        if name:
+        if name and name.lower() != "флибуста":
             return name
 
     return "Неизвестный автор"
