@@ -15,12 +15,7 @@ SEEN_FILE = "seen.json"
 def load_json(filename, default):
     try:
         with open(filename, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        print(f"{filename} прочитан:", data)
-
-        return data
-
+            return json.load(f)
     except Exception as e:
         print(f"Ошибка чтения {filename}:", e)
         return default
@@ -51,7 +46,6 @@ def send_message(text):
 
 
 def main():
-
     print("Старт проверки")
 
     authors = load_json(AUTHORS_FILE, [])
@@ -59,25 +53,28 @@ def main():
 
     print("Авторов:", len(authors))
 
-    if not authors:
-        print("СПИСОК АВТОРОВ ПУСТ!")
-        return
-
     for author_url in authors:
 
         print("Проверяем:", author_url)
 
         try:
             books = get_author_books(author_url)
-
-            print("Найдено книг:", len(books))
-            print("Первые книги:", books[:5])
-
         except Exception as e:
-            print("Ошибка при проверке автора:", e)
+            print("Ошибка при проверке:", e)
             continue
 
-        old_books = seen.get(author_url, [])
+        print("Найдено книг:", len(books))
+        print("Первые книги:", books[:5])
+
+        old_books = seen.get(author_url)
+
+        # Первая проверка автора:
+        # просто запоминаем существующие книги
+        # и ничего не отправляем в Telegram.
+        if old_books is None:
+            print("Первичная загрузка автора — уведомление не отправляем.")
+            seen[author_url] = books
+            continue
 
         new_books = [
             book for book in books
@@ -88,7 +85,6 @@ def main():
         print("Новых книг:", len(new_books))
 
         if new_books:
-
             message = (
                 "📚 Новые книги на Флибусте:\n\n"
                 + "\n".join(
