@@ -22,7 +22,9 @@ def get_page(url):
 def get_author_name(author_url):
     soup = get_page(author_url)
 
+    # Ищем имя автора среди заголовков
     for element in soup.find_all("h1"):
+
         name = element.get_text(" ", strip=True)
 
         if not name:
@@ -36,9 +38,11 @@ def get_author_name(author_url):
 
         return name
 
+    # Запасной вариант — название страницы
     page_title = soup.find("title")
 
     if page_title:
+
         name = page_title.get_text(" ", strip=True)
 
         for separator in [
@@ -46,6 +50,7 @@ def get_author_name(author_url):
             " — Флибуста",
             " - Флибуста"
         ]:
+
             if separator in name:
                 name = name.split(separator)[0].strip()
 
@@ -53,24 +58,6 @@ def get_author_name(author_url):
             return name
 
     return "Неизвестный автор"
-
-
-def book_belongs_to_author(book_url, author_name):
-    try:
-        soup = get_page(book_url)
-
-        author_lower = author_name.lower().strip()
-
-        page_text = soup.get_text(" ", strip=True).lower()
-
-        if author_lower in page_text:
-            return True
-
-        return False
-
-    except Exception as e:
-        print("Ошибка проверки книги:", e)
-        return False
 
 
 def get_author_books(author_url):
@@ -81,7 +68,6 @@ def get_author_books(author_url):
     print("Автор:", author_name)
 
     books = []
-    checked_urls = set()
 
     bad_names = {
         "(читать)",
@@ -96,8 +82,7 @@ def get_author_books(author_url):
         "rtf"
     }
 
-    book_links = []
-
+    # Получаем ссылки на книги
     for element in soup.find_all("a", href=True):
 
         text = element.get_text(" ", strip=True)
@@ -106,36 +91,21 @@ def get_author_books(author_url):
         if not text:
             continue
 
+        # Убираем служебные ссылки
         if text.lower() in bad_names:
             continue
 
         if text.startswith("("):
             continue
 
+        # Нам нужны только страницы книг
         if "/b/" not in href:
             continue
 
-        book_url = urljoin(author_url, href)
+        # Не добавляем дубликаты
+        if text not in books:
+            books.append(text)
 
-        if book_url in checked_urls:
-            continue
-
-        checked_urls.add(book_url)
-
-        book_links.append(
-            (text, book_url)
-        )
-
-    print("Найдено ссылок на книги:", len(book_links))
-
-    for book_name, book_url in book_links:
-
-        if book_belongs_to_author(
-            book_url,
-            author_name
-        ):
-
-            if book_name not in books:
-                books.append(book_name)
+    print("Найдено книг:", len(books))
 
     return books
