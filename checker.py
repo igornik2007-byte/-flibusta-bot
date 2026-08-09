@@ -68,207 +68,223 @@ def get_page(url):
 
 
 def get_author_name(soup):
-    # Сначала пытаемся найти H1
-    h1 = soup.find("h1")
+    """
+    Не используем soup.find("h1"),
+    потому что на некоторых страницах первым H1
+    может оказаться элемент сайта.
 
-    if h1:
-        name = h1.get_text(" ", strip=True)
+    На странице автора Flibusta название автора
+    присутствует в <title>.
+    """
 
-        if name:
-            return name
-
-    # Если H1 нет — пробуем title
     title = soup.find("title")
 
     if title:
-        name = title.get_text(" ", strip=True)
+        text = title.get_text(" ", strip=True)
 
-        # Убираем хвосты Flibusta
+        # Например:
+        # Ник Перумов | Флибуста
+
         for separator in (
-            " | Флибуста",
-            " — Флибуста",
-            " - Флибуста",
+            "| Флибуста",
+            "— Флибуста",
+            "- Флибуста",
         ):
-            if separator in name:
-                name = name.split(separator, 1)[0].strip()
+            if separator in text:
+                text = text.split(separator, 1)[0].strip()
 
-        if name:
-            return name
+        if text:
+            return text
+
+    # Запасной вариант:
+    for h in soup.find_all("h1"):
+        text = h.get_text(" ", strip=True)
+
+        if text and text.lower() not in {
+            "флибуста",
+            "книжное братство"
+        }:
+            return text
 
     return "Неизвестный автор"
 
 
-def is_book_url(href):
+# ============================================================
+# ПОИСК ОСНОВНОГО СПИСКА КНИГ
+# ============================================================
+
+def is_book_href(href):
     """
-    Книга на Flibusta имеет URL примерно:
+    Настоящая ссылка на книгу имеет вид:
 
-    /b/123456
+        /b/123456
 
-    Важный момент:
-    ссылки на авторов /a/
-    сюда не попадут.
+    Но ссылки "читать", "fb2", "epub", "mobi"
+    тоже могут вести в /b/....
+
+    Поэтому одной проверки href недостаточно.
     """
 
     if not href:
         return False
 
     return bool(
-        re.search(r"(?:^|/)b/\d+(?:[/?#]|$)", href)
+        re.search(
+            r"/b/\d+(?:[/?#]|$)",
+            href
+        )
     )
 
 
-def clean_book_title(title):
+def looks_like_format_link(text):
     """
-    Чистим название книги от лишних пробелов.
-    """
-
-    title = re.sub(r"\s+", " ", title)
-    return title.strip()
-
-
-def find_main_book_container(soup):
-    """
-    Пытаемся найти основной контейнер со списком книг автора.
-
-    На Flibusta рядом с книгами может находиться боковой блок
-    «Впечатления о книгах».
-
-    Мы НЕ используем всю страницу целиком.
+    Отбрасываем ссылки форматов и служебные ссылки.
     """
 
-    # --------------------------------------------------------
-    # Вариант 1.
-    # Ищем элемент, содержащий много ссылок /b/
-    # --------------------------------------------------------
+    text = text.strip().lower()
 
-    candidates = []
+    bad = {
+        "(читать)",
+        "читать",
+        "(fb2)",
+        "fb2",
+        "(epub)",
+        "epub",
+        "(mobi)",
+        "mobi",
+        "(rtf)",
+        "rtf",
+        "(txt)",
+        "txt",
+        "(pdf)",
+        "pdf",
+        "mail",
+        "(mail)",
+        "скачать",
+    }
 
-    for tag in soup.find_all(["div", "section", "main", "article", "table"]):
-
-        book_links = []
-
-        for a in tag.find_all("a", href=True):
-            if is_book_url(a.get("href")):
-                book_links.append(a)
-
-        if len(book_links) >= 2:
-            candidates.append((len(book_links), tag))
-
-    if candidates:
-        # Берём наиболее подходящий контейнер.
-        candidates.sort(key=lambda x: x[0], reverse=True)
-
-        best = candidates[0][1]
-
-        return best
-
-    return None
+    return text in bad
 
 
-def get_books_from_container(container):
+def get_real_book_links(soup):
     """
-    Извлекает только ссылки /b/ из переданного контейнера.
+    На странице Flibusta структура примерно такая:
+
+        [название книги] [читать] [fb2] [epub] [mobi]
+
+    Все эти ссылки могут вести на одну книгу.
+
+    Нас интересует только ссылка с НАЗВАНИЕМ книги.
+
+    Отличаем её от служебных ссылок по тексту.
     """
 
     books = []
     seen_urls = set()
 
-    for a in container.find_all("a", href=True):
+    for a in soup.find_all("a", href=True):
 
         href = a.get("href", "")
+        text = a.get_text(" ", strip=True)
 
-        if not is_book_url(href):
+        if not is_book_href(href):
+            continue
+
+        if not text:
+            continue
+
+        if looks_like_format_link(text):
+            continue
+
+        # Ссылки "читать" и форматы уже отсеяны.
+        #
+        # Дополнительная защита от ссылок,
+        # содержащих только скобки.
+
+        if text.startswith("(") and text.endswith(")"):
             continue
 
         # Нормализуем URL
-        href_clean = href.split("#", 1)[0]
+        clean_url = href.split("#", 1)[0]
 
-        if href_clean in seen_urls:
+        # Если одна и та же книга уже встретилась —
+        # не добавляем её второй раз.
+        if clean_url in seen_urls:
             continue
 
-        seen_urls.add(href_clean)
-
-        title = clean_book_title(
-            a.get_text(" ", strip=True)
-        )
-
-        if not title:
-            continue
-
-        # Технические ссылки
-        bad_titles = {
-            "читать",
-            "скачать",
-            "mail",
-            "fb2",
-            "epub",
-            "mobi",
-            "rtf",
-            "txt",
-            "pdf",
-        }
-
-        if title.lower() in bad_titles:
-            continue
+        seen_urls.add(clean_url)
 
         books.append({
-            "title": title,
-            "url": href_clean
+            "title": text,
+            "url": clean_url
         })
 
     return books
 
 
-def remove_impressions_books(soup, books):
+def remove_impressions_section(soup, books):
     """
-    Дополнительная защита.
+    Боковой блок:
 
-    Если ссылка на книгу находится внутри блока
-    «Впечатления о книгах», она удаляется.
+        Впечатления о книгах
+
+    содержит ссылки на книги совершенно других авторов.
+
+    Ищем этот блок и запоминаем ссылки на книги,
+    которые находятся внутри него.
     """
 
-    impression_links = set()
+    impression_urls = set()
 
-    # Ищем текстовый элемент с заголовком
+    # Ищем текст именно заголовка.
     for tag in soup.find_all(
         ["h1", "h2", "h3", "h4", "h5", "h6",
          "div", "section", "aside", "strong", "span"]
     ):
 
-        text = tag.get_text(" ", strip=True).lower()
+        text = re.sub(
+            r"\s+",
+            " ",
+            tag.get_text(" ", strip=True)
+        ).strip().lower()
 
-        if text == "впечатления о книгах":
+        if text != "впечатления о книгах":
+            continue
 
-            # Идём вверх по дереву и ищем разумный контейнер.
-            parent = tag.parent
+        # Поднимаемся по DOM.
+        parent = tag.parent
 
-            for _ in range(5):
+        for _ in range(6):
 
-                if parent is None:
-                    break
+            if parent is None:
+                break
 
-                links = parent.find_all("a", href=True)
+            links = parent.find_all("a", href=True)
 
-                book_links = [
-                    a for a in links
-                    if is_book_url(a.get("href", ""))
-                ]
+            found = False
 
-                if book_links:
-                    for a in book_links:
-                        impression_links.add(
-                            a.get("href", "").split("#", 1)[0]
-                        )
+            for a in links:
 
-                    break
+                href = a.get("href", "")
 
-                parent = parent.parent
+                if is_book_href(href):
+
+                    impression_urls.add(
+                        href.split("#", 1)[0]
+                    )
+
+                    found = True
+
+            if found:
+                break
+
+            parent = parent.parent
 
     result = []
 
     for book in books:
 
-        if book["url"] not in impression_links:
+        if book["url"] not in impression_urls:
             result.append(book)
 
     return result
@@ -276,40 +292,42 @@ def remove_impressions_books(soup, books):
 
 def get_author_books(soup):
     """
-    Главная функция поиска книг автора.
+    Получаем книги автора.
 
-    Важная логика:
-
-    1. Ищем контейнер основного списка.
-    2. Берём только /b/ID.
-    3. Удаляем ссылки из «Впечатления о книгах».
-    4. Удаляем дубликаты.
+    Важно:
+    - не берём ссылки "читать";
+    - не берём fb2/epub/mobi;
+    - не берём книги из блока впечатлений;
+    - сохраняем URL книги, а не только название.
     """
 
-    container = find_main_book_container(soup)
+    books = get_real_book_links(soup)
 
-    if container is None:
-        print("Не удалось найти контейнер книг.")
+    print(
+        "Книг до удаления блока впечатлений:",
+        len(books)
+    )
 
-        return []
-
-    books = get_books_from_container(container)
-
-    books = remove_impressions_books(
+    books = remove_impressions_section(
         soup,
         books
     )
 
-    # Убираем дубликаты по URL
+    print(
+        "Книг после удаления блока впечатлений:",
+        len(books)
+    )
+
+    # Финальная защита от дублей
     result = []
-    urls = set()
+    seen = set()
 
     for book in books:
 
-        if book["url"] in urls:
+        if book["url"] in seen:
             continue
 
-        urls.add(book["url"])
+        seen.add(book["url"])
         result.append(book)
 
     return result
@@ -336,7 +354,10 @@ def send_message(text):
         print("ОШИБКА: TELEGRAM_TOKEN не найден")
         return False
 
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{TOKEN}/sendMessage"
+    )
 
     try:
 
@@ -349,32 +370,42 @@ def send_message(text):
             timeout=30,
         )
 
-        print("Telegram:", response.text)
+        print(
+            "Telegram:",
+            response.text
+        )
 
         return response.ok
 
     except Exception as e:
 
-        print("Ошибка Telegram:", e)
+        print(
+            "Ошибка Telegram:",
+            e
+        )
 
         return False
 
 
 def make_message(author_name, books):
 
-    text = (
-        "📚 Новые книги на Флибусте:\n\n"
-        f"👤 Автор: {author_name}\n\n"
-    )
+    lines = [
+        "📚 Новые книги на Флибусте:",
+        "",
+        f"👤 Автор: {author_name}",
+        ""
+    ]
 
     for book in books:
-        text += f"• {book['title']}\n"
+        lines.append(
+            f"• {book['title']}"
+        )
 
-    return text
+    return "\n".join(lines)
 
 
 # ============================================================
-# ПРОВЕРКА АВТОРОВ
+# ПРОВЕРКА
 # ============================================================
 
 def main():
@@ -393,22 +424,33 @@ def main():
         {}
     )
 
-    print("Авторов:", len(authors))
+    print(
+        "Авторов:",
+        len(authors)
+    )
 
     for author_url in authors:
 
         print()
         print("--------------------------------")
-        print("Проверяем:", author_url)
+        print(
+            "Проверяем:",
+            author_url
+        )
         print("--------------------------------")
 
         try:
 
-            author_name, books = get_author_books_from_url(
-                author_url
+            author_name, books = (
+                get_author_books_from_url(
+                    author_url
+                )
             )
 
-            print("Автор:", author_name)
+            print(
+                "Автор:",
+                author_name
+            )
 
             print(
                 "Найдено книг:",
@@ -424,7 +466,7 @@ def main():
             )
 
             # ------------------------------------------------
-            # Если книг не нашли
+            # Защита от неправильной страницы
             # ------------------------------------------------
 
             if not books:
@@ -439,8 +481,8 @@ def main():
 
                 continue
 
-            # Сохраняем только URL книг
-            current_books = [
+            # Сохраняем URL
+            current_urls = [
                 book["url"]
                 for book in books
             ]
@@ -449,35 +491,34 @@ def main():
             # Первый запуск
             # ------------------------------------------------
 
-            old_books = seen.get(author_url)
+            old_urls = seen.get(
+                author_url
+            )
 
-            if old_books is None:
-
-                print(
-                    "Первичная загрузка автора."
-                )
+            if old_urls is None:
 
                 print(
-                    "Уведомление НЕ отправляем."
+                    "Первичная загрузка автора — "
+                    "уведомление не отправляем."
                 )
 
-                seen[author_url] = current_books
+                seen[author_url] = current_urls
 
                 continue
 
             # ------------------------------------------------
-            # Ищем новые книги
+            # Новые книги
             # ------------------------------------------------
 
             new_urls = [
                 url
-                for url in current_books
-                if url not in old_books
+                for url in current_urls
+                if url not in old_urls
             ]
 
             print(
                 "Старых книг:",
-                len(old_books)
+                len(old_urls)
             )
 
             print(
@@ -498,13 +539,63 @@ def main():
                     new_books
                 )
 
-                send_message(message)
+                # Telegram ограничивает сообщение
+                # примерно 4096 символами.
+                #
+                # Если книг много — отправляем
+                # несколькими сообщениями.
+
+                MAX_LENGTH = 3500
+
+                if len(message) <= MAX_LENGTH:
+
+                    send_message(message)
+
+                else:
+
+                    print(
+                        "Сообщение слишком большое — "
+                        "разбиваем на части."
+                    )
+
+                    header = (
+                        "📚 Новые книги на Флибусте:\n\n"
+                        f"👤 Автор: {author_name}\n\n"
+                    )
+
+                    chunk = header
+
+                    for book in new_books:
+
+                        line = (
+                            f"• {book['title']}\n"
+                        )
+
+                        if (
+                            len(chunk) +
+                            len(line)
+                        ) > MAX_LENGTH:
+
+                            send_message(chunk)
+
+                            time.sleep(1)
+
+                            chunk = (
+                                f"📚 Продолжение — "
+                                f"{author_name}:\n\n"
+                            )
+
+                        chunk += line
+
+                    if chunk.strip():
+
+                        send_message(chunk)
 
             # ------------------------------------------------
             # Обновляем базу
             # ------------------------------------------------
 
-            seen[author_url] = current_books
+            seen[author_url] = current_urls
 
         except requests.exceptions.Timeout:
 
@@ -528,7 +619,7 @@ def main():
                 e
             )
 
-        time.sleep(1)
+        time.sleep(2)
 
     save_json(
         SEEN_FILE,
@@ -540,10 +631,6 @@ def main():
     print("ПРОВЕРКА ЗАВЕРШЕНА")
     print("================================")
 
-
-# ============================================================
-# START
-# ============================================================
 
 if __name__ == "__main__":
     main()
