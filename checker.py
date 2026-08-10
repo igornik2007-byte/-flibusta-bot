@@ -18,7 +18,7 @@ AUTHORS_FILE = "authors.json"
 SEEN_FILE = "seen.json"
 
 REQUEST_TIMEOUT = 45
-RETRIES = 3
+MAX_RETRIES = 3
 
 HEADERS = {
     "User-Agent": (
@@ -27,8 +27,8 @@ HEADERS = {
         "Chrome/139.0 Safari/537.36"
     ),
     "Accept": (
-        "text/html,application/xhtml+xml,"
-        "application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        "text/html,application/xhtml+xml,application/xml;"
+        "q=0.9,image/avif,image/webp,*/*;q=0.8"
     ),
     "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
     "Connection": "keep-alive",
@@ -43,10 +43,8 @@ def load_json(filename, default):
     try:
         with open(filename, "r", encoding="utf-8") as f:
             return json.load(f)
-
     except FileNotFoundError:
         return default
-
     except Exception as e:
         print(f"Ошибка чтения {filename}: {e}")
         return default
@@ -63,27 +61,20 @@ def save_json(filename, data):
 
 
 # ============================================================
-# FLIBUSTA
+# ЗАГРУЗКА FLIBUSTA
 # ============================================================
 
 def get_page(url):
-    """
-    Загружает страницу автора.
-
-    При временных ошибках 502/503/504
-    делает несколько повторных попыток.
-    """
-
     last_error = None
 
-    for attempt in range(1, RETRIES + 1):
+    for attempt in range(1, MAX_RETRIES + 1):
+
+        print(
+            f"Загружаем страницу "
+            f"(попытка {attempt}/{MAX_RETRIES}): {url}"
+        )
 
         try:
-            print(
-                f"Загружаем страницу "
-                f"(попытка {attempt}/{RETRIES}): {url}"
-            )
-
             response = requests.get(
                 url,
                 headers=HEADERS,
@@ -91,13 +82,12 @@ def get_page(url):
             )
 
             print("HTTP:", response.status_code)
-
-            response.raise_for_status()
-
             print(
                 "Получено символов:",
                 len(response.text)
             )
+
+            response.raise_for_status()
 
             return BeautifulSoup(
                 response.text,
@@ -105,20 +95,19 @@ def get_page(url):
             )
 
         except requests.exceptions.RequestException as e:
-
             last_error = e
 
             print("Ошибка:", e)
 
-            if attempt < RETRIES:
-                print("Повтор через 5 секунд...")
-                time.sleep(5)
+            if attempt < MAX_RETRIES:
+                print("Повторяем через 3 секунды...")
+                time.sleep(3)
 
     raise last_error
 
 
 # ============================================================
-# АВТОР
+# ИМЯ АВТОРА
 # ============================================================
 
 def get_author_name(soup):
@@ -126,24 +115,22 @@ def get_author_name(soup):
     h1 = soup.find("h1")
 
     if h1:
-        name = h1.get_text(
+        text = h1.get_text(
             " ",
             strip=True
         )
 
         if (
-            name
-            and name.lower() not in {
-                "флибуста",
-                "книжное братство"
-            }
+            text
+            and text.lower() != "флибуста"
+            and text.lower() != "книжное братство"
         ):
-            return name
+            return text
 
     title = soup.find("title")
 
     if title:
-        name = title.get_text(
+        text = title.get_text(
             " ",
             strip=True
         )
@@ -153,221 +140,187 @@ def get_author_name(soup):
             " — Флибуста",
             " - Флибуста",
         ):
-            if separator in name:
-                name = name.split(
+            if separator in text:
+                text = text.split(
                     separator,
                     1
                 )[0].strip()
 
-        if name:
-            return name
+        if text:
+            return text
 
     return "Неизвестный автор"
 
 
 # ============================================================
-# КНИГИ
+# ОПРЕДЕЛЕНИЕ ССЫЛКИ НА КНИГУ
 # ============================================================
 
-BOOK_RE = re.compile(
-    r"(?:^|/)b/(\d+)(?:[/?#]|$)"
-)
+def get_book_id(href):
 
-
-BAD_TITLES = {
-    "читать",
-    "скачать",
-    "fb2",
-    "epub",
-    "mobi",
-    "rtf",
-    "txt",
-    "pdf",
-    "mail",
-    "открыть",
-}
-
-
-def is_book_link(href):
     if not href:
-        return False
-
-    return bool(
-        BOOK_RE.search(href)
-    )
-
-
-def clean_book_title(title):
-    """
-    Приводит название книги к нормальному виду.
-    """
-
-    title = title.strip()
-
-    # Убираем лишние пробелы
-    title = re.sub(
-        r"\s+",
-        " ",
-        title
-    )
-
-    # Убираем технические варианты
-    title_lower = title.lower()
-
-    if title_lower in BAD_TITLES:
         return None
 
-    # Варианты вроде "(читать)"
-    if (
-        title.startswith("(")
-        and title.endswith(")")
-    ):
-        return None
+    # Основной вариант:
+    # /b/12345
+    match = re.search(
+        r"/b/(\d+)",
+        href
+    )
 
-    return title
-
-
-def find_impressions_boundary(soup):
-    """
-    Ищем блок «Впечатления о книгах».
-
-    Всё, что находится после него,
-    не считаем книгами автора.
-    """
-
-    # Сначала ищем элементы с точным/частичным текстом.
-    for tag in soup.find_all(
-        [
-            "h1",
-            "h2",
-            "h3",
-            "h4",
-            "h5",
-            "h6",
-            "strong",
-            "div",
-            "section",
-            "aside",
-        ]
-    ):
-
-        text = tag.get_text(
-            " ",
-            strip=True
-        ).lower()
-
-        if "впечатления о книгах" in text:
-            return tag
+    if match:
+        return match.group(1)
 
     return None
 
 
+# ============================================================
+# ОЧИСТКА НАЗВАНИЯ
+# ============================================================
+
+def clean_book_title(text):
+
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    # Убираем лишние пробелы
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    )
+
+    # Служебные названия ссылок
+    bad_titles = {
+        "читать",
+        "скачать",
+        "fb2",
+        "epub",
+        "mobi",
+        "rtf",
+        "txt",
+        "pdf",
+        "mail",
+    }
+
+    check = text.lower()
+
+    # Если это только "(читать)"
+    if check.strip("() ") in bad_titles:
+        return ""
+
+    # Удаляем служебные скобочные ссылки
+    if re.fullmatch(
+        r"\((?:читать|скачать|fb2|epub|mobi|rtf|txt|pdf|mail)\)",
+        check
+    ):
+        return ""
+
+    return text
+
+
+# ============================================================
+# ПОИСК КНИГ
+# ============================================================
+
 def get_author_books(soup):
-    """
-    Извлекает книги автора.
-
-    Основной критерий книги:
-        ссылка /b/12345
-
-    При этом:
-    - исключаем технические ссылки;
-    - удаляем дубли;
-    - не берём книги из блока
-      «Впечатления о книгах».
-    """
-
-    author_h1 = soup.find("h1")
-    boundary = find_impressions_boundary(soup)
 
     books = []
-    seen_titles = set()
+    seen_ids = set()
 
     # --------------------------------------------------------
-    # Определяем порядковые позиции элементов.
+    # ВАЖНО:
     #
-    # Это надёжнее, чем пытаться сравнивать сами Tag-объекты.
+    # Мы больше НЕ зависим от:
+    #
+    # - сортировки книг;
+    # - положения блока на странице;
+    # - h1/h2/div;
+    # - "Впечатлений о книгах".
+    #
+    # Ищем непосредственно ссылки /b/ID.
     # --------------------------------------------------------
 
-    all_elements = soup.find_all(True)
+    all_links = soup.find_all("a")
 
-    h1_position = -1
-    boundary_position = len(all_elements)
+    candidate_links = []
 
-    if author_h1 is not None:
+    for link in all_links:
 
-        for i, element in enumerate(all_elements):
+        href = link.get("href", "")
 
-            if element is author_h1:
-                h1_position = i
-                break
+        book_id = get_book_id(href)
 
-    if boundary is not None:
-
-        for i, element in enumerate(all_elements):
-
-            if element is boundary:
-                boundary_position = i
-                break
-
-    # --------------------------------------------------------
-    # Если H1 не найден, начинаем с начала страницы.
-    # --------------------------------------------------------
-
-    for i, element in enumerate(all_elements):
-
-        # До имени автора не идём.
-        if i <= h1_position:
+        if not book_id:
             continue
 
-        # После блока впечатлений не идём.
-        if i >= boundary_position:
-            break
-
-        if element.name != "a":
-            continue
-
-        href = element.get(
-            "href",
-            ""
+        candidate_links.append(
+            (book_id, link)
         )
 
-        if not is_book_link(href):
+    print(
+        "Кандидатов ссылок на книги:",
+        len(candidate_links)
+    )
+
+    # --------------------------------------------------------
+    # Собираем книги.
+    #
+    # Если один и тот же ID встречается несколько раз,
+    # считаем его одной книгой.
+    # --------------------------------------------------------
+
+    for book_id, link in candidate_links:
+
+        if book_id in seen_ids:
             continue
 
-        title = element.get_text(
-            " ",
-            strip=True
+        title = clean_book_title(
+            link.get_text(
+                " ",
+                strip=True
+            )
         )
-
-        title = clean_book_title(title)
 
         if not title:
             continue
 
-        # ----------------------------------------------------
-        # Иногда одна книга имеет несколько одинаковых ссылок.
-        # ----------------------------------------------------
-
-        if title in seen_titles:
+        # Некоторые ссылки могут содержать только служебный
+        # текст. Такие ссылки пропускаем.
+        if len(title) < 2:
             continue
 
-        seen_titles.add(title)
-        books.append(title)
+        seen_ids.add(book_id)
+
+        books.append({
+            "id": book_id,
+            "title": title
+        })
+
+    print(
+        "Уникальных книг:",
+        len(books)
+    )
 
     return books
 
+
+# ============================================================
+# АВТОР
+# ============================================================
 
 def get_author_books_from_url(author_url):
 
     soup = get_page(author_url)
 
-    author_name = get_author_name(soup)
+    author_name = get_author_name(
+        soup
+    )
 
-    books = get_author_books(soup)
-
-    print(
-        "Кандидатов книг:",
-        len(books)
+    books = get_author_books(
+        soup
     )
 
     return author_name, books
@@ -386,7 +339,7 @@ def send_message(text):
         return False
 
     url = (
-        "https://api.telegram.org/"
+        f"https://api.telegram.org/"
         f"bot{TOKEN}/sendMessage"
     )
 
@@ -418,229 +371,31 @@ def send_message(text):
         return False
 
 
-def send_long_message(text):
-    """
-    Telegram разрешает примерно 4096 символов
-    в одном сообщении.
-
-    Поэтому длинный список книг
-    разбиваем на несколько сообщений.
-    """
-
-    MAX_LENGTH = 3800
-
-    if len(text) <= MAX_LENGTH:
-        return send_message(text)
-
-    parts = []
-    current = ""
-
-    for line in text.splitlines(True):
-
-        if len(current) + len(line) > MAX_LENGTH:
-
-            if current:
-                parts.append(current)
-
-            current = line
-
-        else:
-            current += line
-
-    if current:
-        parts.append(current)
-
-    success = True
-
-    for part in parts:
-
-        if not send_message(part):
-            success = False
-
-        time.sleep(1)
-
-    return success
-
+# ============================================================
+# ФОРМИРОВАНИЕ СООБЩЕНИЯ
+# ============================================================
 
 def make_message(
     author_name,
     new_books
 ):
 
-    lines = [
-        "📚 Новые книги на Флибусте:",
-        "",
-        f"👤 Автор: {author_name}",
-        "",
-    ]
+    text = (
+        "📚 Новые книги на Флибусте:\n\n"
+        f"👤 Автор: {author_name}\n\n"
+    )
 
     for book in new_books:
-        lines.append(
-            f"• {book}"
+
+        text += (
+            f"• {book['title']}\n"
         )
 
-    return "\n".join(lines)
+    return text
 
 
 # ============================================================
-# ПРОВЕРКА ОДНОГО АВТОРА
-# ============================================================
-
-def check_author(
-    author_url,
-    seen
-):
-
-    print()
-    print("--------------------------------")
-    print(
-        "Проверяем:",
-        author_url
-    )
-    print("--------------------------------")
-
-    try:
-
-        author_name, books = (
-            get_author_books_from_url(
-                author_url
-            )
-        )
-
-        print(
-            "Автор:",
-            author_name
-        )
-
-        print(
-            "Найдено книг:",
-            len(books)
-        )
-
-        print(
-            "Первые книги:",
-            books[:10]
-        )
-
-        # ----------------------------------------------------
-        # Защита от ситуации,
-        # когда сайт отдал кривую страницу.
-        # ----------------------------------------------------
-
-        if not books:
-
-            print(
-                "Книги не найдены — "
-                "старый список не изменяем."
-            )
-
-            return
-
-        old_books = seen.get(
-            author_url
-        )
-
-        # ----------------------------------------------------
-        # Первый запуск автора.
-        # ----------------------------------------------------
-
-        if old_books is None:
-
-            print(
-                "Первичная загрузка автора — "
-                "уведомление не отправляем."
-            )
-
-            seen[author_url] = books
-
-            return
-
-        # ----------------------------------------------------
-        # Ищем только новые названия.
-        # ----------------------------------------------------
-
-        new_books = [
-            book
-            for book in books
-            if book not in old_books
-        ]
-
-        print(
-            "Старых книг:",
-            len(old_books)
-        )
-
-        print(
-            "Новых книг:",
-            len(new_books)
-        )
-
-        # ----------------------------------------------------
-        # ВАЖНО:
-        # если новых книг нет — Telegram не трогаем.
-        # ----------------------------------------------------
-
-        if not new_books:
-
-            print(
-                "Новых книг нет."
-            )
-
-            # Обновляем базу на случай изменения
-            # порядка книг.
-            seen[author_url] = books
-
-            return
-
-        print(
-            "Отправляем новые книги:"
-        )
-
-        for book in new_books:
-            print(
-                "  +",
-                book
-            )
-
-        message = make_message(
-            author_name,
-            new_books
-        )
-
-        send_long_message(message)
-
-        # ----------------------------------------------------
-        # После успешной проверки сохраняем
-        # полный актуальный список.
-        # ----------------------------------------------------
-
-        seen[author_url] = books
-
-    except requests.exceptions.Timeout:
-
-        print(
-            "ОШИБКА: Flibusta не ответила "
-            f"за {REQUEST_TIMEOUT} секунд."
-        )
-
-    except requests.exceptions.RequestException as e:
-
-        print(
-            "ОШИБКА соединения:",
-            e
-        )
-
-    except Exception as e:
-
-        print(
-            "ОШИБКА:",
-            type(e).__name__,
-            e
-        )
-
-
-# ============================================================
-# MAIN
+# ПРОВЕРКА АВТОРОВ
 # ============================================================
 
 def main():
@@ -666,12 +421,283 @@ def main():
 
     for author_url in authors:
 
-        check_author(
-            author_url,
-            seen
+        print()
+        print("--------------------------------")
+        print(
+            "Проверяем:",
+            author_url
         )
+        print("--------------------------------")
 
-        # Небольшая пауза между авторами.
+        try:
+
+            author_name, books = (
+                get_author_books_from_url(
+                    author_url
+                )
+            )
+
+            print(
+                "Автор:",
+                author_name
+            )
+
+            print(
+                "Найдено книг:",
+                len(books)
+            )
+
+            print(
+                "Первые книги:",
+                [
+                    b["title"]
+                    for b in books[:10]
+                ]
+            )
+
+            # ------------------------------------------------
+            # Если 0 книг — ничего не меняем.
+            # ------------------------------------------------
+
+            if not books:
+
+                print(
+                    "Книги не найдены — "
+                    "старый список не изменяем."
+                )
+
+                continue
+
+            # ------------------------------------------------
+            # Старый список.
+            # ------------------------------------------------
+
+            old_books = seen.get(
+                author_url
+            )
+
+            # ------------------------------------------------
+            # ПЕРВЫЙ ЗАПУСК
+            # ------------------------------------------------
+
+            if old_books is None:
+
+                print(
+                    "Первичная загрузка автора — "
+                    "уведомление не отправляем."
+                )
+
+                seen[author_url] = books
+
+                continue
+
+            # ------------------------------------------------
+            # Поддерживаем старый формат seen.json,
+            # если там раньше были просто названия.
+            # ------------------------------------------------
+
+            old_ids = set()
+
+            for item in old_books:
+
+                if isinstance(
+                    item,
+                    dict
+                ):
+
+                    book_id = item.get(
+                        "id"
+                    )
+
+                    if book_id:
+                        old_ids.add(
+                            str(book_id)
+                        )
+
+                elif isinstance(
+                    item,
+                    str
+                ):
+
+                    # Старый формат.
+                    # Такие записи сравним по названию ниже.
+                    pass
+
+            old_titles = set()
+
+            for item in old_books:
+
+                if isinstance(
+                    item,
+                    dict
+                ):
+
+                    title = item.get(
+                        "title"
+                    )
+
+                    if title:
+                        old_titles.add(
+                            title
+                        )
+
+                elif isinstance(
+                    item,
+                    str
+                ):
+
+                    old_titles.add(
+                        item
+                    )
+
+            # ------------------------------------------------
+            # Определяем новые книги.
+            #
+            # В первую очередь сравниваем ID.
+            # ------------------------------------------------
+
+            new_books = []
+
+            for book in books:
+
+                book_id = str(
+                    book["id"]
+                )
+
+                title = book["title"]
+
+                if book_id in old_ids:
+                    continue
+
+                # Защита при переходе со старого
+                # формата seen.json.
+                if title in old_titles:
+                    continue
+
+                new_books.append(
+                    book
+                )
+
+            print(
+                "Старых книг:",
+                len(old_books)
+            )
+
+            print(
+                "Новых книг:",
+                len(new_books)
+            )
+
+            # ------------------------------------------------
+            # НОВЫЕ КНИГИ
+            # ------------------------------------------------
+
+            if new_books:
+
+                print(
+                    "Новые книги:"
+                )
+
+                for book in new_books:
+
+                    print(
+                        " +",
+                        book["title"],
+                        f"(ID {book['id']})"
+                    )
+
+                message = make_message(
+                    author_name,
+                    new_books
+                )
+
+                # Telegram ограничивает сообщение
+                # примерно 4096 символами.
+                #
+                # Поэтому разбиваем длинный список.
+                MAX_MESSAGE_LENGTH = 3500
+
+                if len(message) <= MAX_MESSAGE_LENGTH:
+
+                    send_message(
+                        message
+                    )
+
+                else:
+
+                    current = (
+                        "📚 Новые книги на "
+                        "Флибусте:\n\n"
+                        f"👤 Автор: "
+                        f"{author_name}\n\n"
+                    )
+
+                    for book in new_books:
+
+                        line = (
+                            f"• {book['title']}\n"
+                        )
+
+                        if (
+                            len(current)
+                            + len(line)
+                            > MAX_MESSAGE_LENGTH
+                        ):
+
+                            send_message(
+                                current
+                            )
+
+                            time.sleep(1)
+
+                            current = (
+                                "📚 Продолжение:\n\n"
+                                f"👤 Автор: "
+                                f"{author_name}\n\n"
+                            )
+
+                        current += line
+
+                    if current.strip():
+
+                        send_message(
+                            current
+                        )
+
+            else:
+
+                print(
+                    "Новых книг нет."
+                )
+
+            # ------------------------------------------------
+            # Обновляем seen ТОЛЬКО если получили книги.
+            # ------------------------------------------------
+
+            seen[author_url] = books
+
+        except requests.exceptions.Timeout:
+
+            print(
+                "ОШИБКА: Flibusta не ответила "
+                f"за {REQUEST_TIMEOUT} секунд."
+            )
+
+        except requests.exceptions.RequestException as e:
+
+            print(
+                "ОШИБКА соединения:",
+                e
+            )
+
+        except Exception as e:
+
+            print(
+                "ОШИБКА:",
+                e
+            )
+
+        # Пауза между авторами
         time.sleep(2)
 
     save_json(
