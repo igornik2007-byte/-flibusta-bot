@@ -1,4 +1,4 @@
-import os
+ import os
 import json
 import re
 import time
@@ -72,7 +72,6 @@ def get_page(url):
                 timeout=REQUEST_TIMEOUT
             )
 
-            # Корректная обработка кириллицы
             response.encoding = response.apparent_encoding or "utf-8"
 
             print("HTTP:", response.status_code)
@@ -123,7 +122,6 @@ def get_book_id(href):
     if not href:
         return None
 
-    # Ищем точное совпадение /b/12345 (без /read, /fb2, /epub и т.д.)
     match = re.search(r"^/b/(\d+)/?$", href.strip())
     if match:
         return match.group(1)
@@ -154,29 +152,21 @@ def clean_book_title(text):
 
 
 # ============================================================
-# ВЫДЕЛЕНИЕ ОСНОВНОЙ ОБЛАСТИ СТРАНИЦЫ (ИСКЛЮЧЕНИЕ СИДЕБАРОВ)
+# ВЫДЕЛЕНИЕ ОСНОВНОЙ ОБЛАСТИ СТРАНИЦЫ
 # ============================================================
 
 def isolate_author_content(soup):
-    """
-    Возвращает только центральную область страницы автора,
-    удаляя сайдбары, футеры и блоки отзывов/комментариев.
-    """
-    # Ищем главный контейнер
     main_content = soup.find("div", id="main") or soup.find("div", id="content")
     if not main_content:
         main_content = soup.body or soup
 
-    # Удаляем сайдбары и мусорные блоки, если они присутствуют
     for selector in ["#sidebar-left", "#sidebar-right", "#footer", "#header"]:
         for el in main_content.select(selector):
             el.decompose()
 
-    # Удаляем секции комментариев и impressions, если они идут ниже
     for heading in main_content.find_all(["h2", "h3"]):
         heading_text = heading.get_text(strip=True).lower()
         if any(bad in heading_text for bad in ["впечатления", "рецензии", "комментарии", "обсуждение"]):
-            # Удаляем сам заголовок и все следующие за ним элементы
             for sibling in list(heading.find_next_siblings()):
                 sibling.decompose()
             heading.decompose()
@@ -226,14 +216,7 @@ def get_author_books_from_url(author_url):
     all_books = []
     seen_ids = set()
 
-    # 1. Сбор с первой страницы
-    first_page_books = parse_books_from_soup(soup)
-    for b in first_page_books:
-        if b["id"] not in seen_ids:
-            seen_ids.add(b["id"])
-            all_books.append(b)
-
-    # 2. Проверка пагинации (?page=1, ?page=2...)
+    # 1. Сначала извлекаем пагинацию ДО очистки HTML
     pagination_urls = set()
     pager = soup.find("ul", class_="pager") or soup.find("div", class_="item-list")
     
@@ -244,7 +227,14 @@ def get_author_books_from_url(author_url):
                 full_url = urljoin(author_url, href)
                 pagination_urls.add(full_url)
 
-    # Обходим найденные дополнительные страницы
+    # 2. Извлекаем книги с первой страницы
+    first_page_books = parse_books_from_soup(soup)
+    for b in first_page_books:
+        if b["id"] not in seen_ids:
+            seen_ids.add(b["id"])
+            all_books.append(b)
+
+    # 3. Обходим дополнительные страницы пагинации
     for page_url in sorted(pagination_urls):
         try:
             time.sleep(1.5)
@@ -316,9 +306,6 @@ def check_author(author_url, seen):
 
         old_books = seen.get(author_url)
 
-        # ----------------------------------------------------
-        # Защита от неполной загрузки страницы
-        # ----------------------------------------------------
         if old_books and len(books) < len(old_books) * 0.5:
             print(
                 f"ВНИМАНИЕ: Найдено {len(books)} книг, хотя раньше было {len(old_books)}. "
@@ -326,17 +313,11 @@ def check_author(author_url, seen):
             )
             return
 
-        # ----------------------------------------------------
-        # Первый запуск для автора
-        # ----------------------------------------------------
         if old_books is None:
             print("Первичная загрузка автора — сохраняем список без уведомлений.")
             seen[author_url] = books
             return
 
-        # ----------------------------------------------------
-        # Извлечение старых ID и заголовков
-        # ----------------------------------------------------
         old_ids = set()
         old_titles = set()
 
@@ -349,9 +330,6 @@ def check_author(author_url, seen):
             elif isinstance(item, str):
                 old_titles.add(item)
 
-        # ----------------------------------------------------
-        # Поиск новых книг
-        # ----------------------------------------------------
         new_books = []
         for book in books:
             book_id = str(book["id"])
@@ -365,9 +343,6 @@ def check_author(author_url, seen):
         print("Старых книг в базе:", len(old_books))
         print("Новых книг найдено:", len(new_books))
 
-        # ----------------------------------------------------
-        # Отправка уведомлений
-        # ----------------------------------------------------
         if new_books:
             print("Отправка новых книг в Telegram:")
             for book in new_books:
@@ -393,7 +368,6 @@ def check_author(author_url, seen):
         else:
             print("Новых книг нет.")
 
-        # Обновляем базу
         seen[author_url] = books
 
     except requests.exceptions.Timeout:
